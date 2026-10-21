@@ -1,6 +1,23 @@
-// Настройки «Только важное» во вкладке «Настройки»: тишина передач у бота и сводка задач — ключи hub.json
-// telegram.focus, telegram.digest, telegram.digest_minutes (белый список ядра, подписи — из снимка).
+// "Only the important" settings in the Settings tab: handoff silence in the bot and the task digest - hub.json keys
+// telegram.focus, telegram.digest, telegram.digest_minutes (core allow-list, labels come from the snapshot).
 const KEYS = ["telegram.focus", "telegram.digest", "telegram.digest_minutes"];
+
+// Own string table: the plugin picks by hub.lang at use time; any other language falls back to English.
+const STR = {
+  en: {
+    title: "Only the important",
+    hint: "What the Telegram bot sends you",
+    old_hub: "This hub does not know the telegram.focus settings - update the hub.",
+  },
+  ru: {
+    title: "Только важное",
+    hint: "Что бот Telegram шлёт вам",
+    old_hub: "Этот хаб не знает настроек telegram.focus — обновите хаб.",
+  },
+};
+
+export const t = (hub, key, vars = {}) =>
+  String(((STR[hub?.lang] ?? STR.en)[key] ?? STR.en[key] ?? key)).replace(/\{(\w+)\}/g, (m, k) => vars[k] ?? m);
 
 export function rows(snap) {
   const all = Array.isArray(snap?.settings) ? snap.settings : [];
@@ -10,12 +27,12 @@ export function rows(snap) {
 export default function register(hub) {
   if (typeof hub.addOptions !== "function") return;
   hub.addOptions({
-    title: "Только важное",
-    hint: "Что бот Telegram шлёт вам",
+    title: t(hub, "title"),
+    hint: t(hub, "hint"),
     render(root, snap) {
       const have = rows(snap);
       if (!have.length) {
-        root.textContent = "Этот хаб не знает настроек telegram.focus — обновите хаб.";
+        root.textContent = t(hub, "old_hub");
         return;
       }
       for (const r of have) {
