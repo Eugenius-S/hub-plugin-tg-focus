@@ -1,10 +1,10 @@
 {
   "name": "tg-focus",
   "icon": "icon.png",
-  "description": "Only the important in Telegram: the bot stays quiet about handoffs (a session passed work on - its interim result is held back and goes out as one message when the chain ends, or is dropped if a result arrived), and every N minutes sends one digest of your open tasks: in the recap layout: waiting for you, in progress, stalled with a date. A new digest erases the previous one; nothing open - it erases and stays quiet",
+  "description": "Only the important in Telegram: the bot stays quiet about handoffs (a session passed work on - its interim result is held back and goes out as one message when the chain ends, or is dropped if a result arrived), and every N minutes sends one digest of your open tasks: grouped by your tasks: a bold heading per task, under it its sub-tasks with a status emoji (waiting for you, in progress, stalled with a date). A new digest erases the previous one; nothing open - it erases and stays quiet",
   "why": "Results and questions in Telegram, not every handoff between sessions; what is in progress - in one digest",
-  "version": "0.3.0",
-  "i18n": {"ru": {"description": "Только важное в Telegram: бот молчит о передачах (сессия отдала работу дальше — её промежуточное придерживается и уходит одним сообщением, когда цепочка кончилась, или выкидывается, если пришёл итог), а раз в N минут шлёт одну сводку ваших открытых задач: разделами как в рекапе: ждут вас, в работе, без движения (с датой). Новая сводка стирает прежнюю; открытых нет — стирает и молчит", "why": "В Telegram — итоги и вопросы, а не каждая передача между сессиями; что в работе — одной сводкой"}},
+  "version": "0.4.0",
+  "i18n": {"ru": {"description": "Только важное в Telegram: бот молчит о передачах (сессия отдала работу дальше — её промежуточное придерживается и уходит одним сообщением, когда цепочка кончилась, или выкидывается, если пришёл итог), а раз в N минут шлёт одну сводку ваших открытых задач: по вашим задачам: жирный заголовок задачи, под ним подзадачи со своим эмодзи статуса (ждёт вас, в работе, стоит — с датой). Новая сводка стирает прежнюю; открытых нет — стирает и молчит", "why": "В Telegram — итоги и вопросы, а не каждая передача между сессиями; что в работе — одной сводкой"}},
   "hub": "^1.15",
   "run": ["python3", "main.py"],
   "web": "main.js"
