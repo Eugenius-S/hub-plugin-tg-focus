@@ -256,7 +256,7 @@ class Language(unittest.TestCase):
             self.assertEqual(main._lang(), "ru")
             self.assertEqual(main.digest(self.st(), NOW).splitlines(), [
                 "**📋 Открытые задачи · 1**", "", "**Fix the bot**",
-                "- ⏭ **Emoji**: pick → ждёт твоего слова"])
+                "- ⏭ **Emoji**: pick → ждёт вашего слова"])
 
     def test_an_unknown_language_falls_back_to_english(self):
         with say("de"):

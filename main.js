@@ -7,12 +7,12 @@ const STR = {
   en: {
     title: "Only the important",
     hint: "What the Telegram bot sends you",
-    old_hub: "This hub does not know the telegram.focus settings - update the hub.",
+    old_hub: "This hub does not know the telegram.focus settings. Update the hub.",
   },
   ru: {
     title: "Только важное",
     hint: "Что бот Telegram шлёт вам",
-    old_hub: "Этот хаб не знает настроек telegram.focus — обновите хаб.",
+    old_hub: "Этот хаб не знает настроек telegram.focus: обновите хаб.",
   },
 };
 
