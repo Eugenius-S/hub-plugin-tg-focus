@@ -15,7 +15,7 @@ TMP = tempfile.mkdtemp(prefix="tg-focus-test-")
 os.environ["HUB_STATE_DIR"] = TMP                          # unconditionally: tests never touch the live hub
 os.environ["HUB_CONFIG"] = os.path.join(TMP, "hub.json")
 
-from core import spool  # noqa: E402
+from core import executors, reducer, spool  # noqa: E402
 
 import main  # noqa: E402
 
@@ -42,11 +42,22 @@ def task(did, session, words, state="working", **kw):
             "root": f"m{n}", "created": NOW - 7200, "since": NOW - 7200, **kw}
 
 
+def side(did, session, root, state="working", **kw):
+    """A sub-task of the owner's task: the hub handed his same message to one more session (hub task new --for mN)."""
+    return {"id": did, "session": session, "words": f"Words of {root}", "state": state, "for": root, "for_session": None,
+            "by": "hub", "root": root, "created": NOW - 3600, "since": NOW - 3600, **kw}
+
+
 def sub(did, session, parent, root, state="working", **kw):
-    """An executor's sub-task: set by a session, has no title and no words of the owner."""
+    """An executor's task: a session raised it on its own (hub task run), no title and no words of the owner."""
     return {"id": did, "session": session, "context": "Brief with `code` and /some/path/file.py", "state": state,
             "for": None, "for_session": "dev", "parent": parent, "root": root, "created": NOW - 3600,
             "since": NOW - 3600, **kw}
+
+
+def by(name):
+    """A fact a session wrote (hub task new, hub task go and the like from its turn)."""
+    return {"channel": "session", "owner": False, "sender": name}
 
 
 def world(sessions, tasks, messages=None):
@@ -85,7 +96,7 @@ class Digest(unittest.TestCase):
             session("ex1", gist={"text": "Grouping: tests first"}, recap={"text": "Writes the grouping"}, delegation="d11"),
             session("ex2", "idle", pending=[{"id": "q1"}], gist={"text": "Emoji: asks which one"})],
             [task("d1", "dev", "Digest by tasks", title="Digest by tasks"),
-             sub("d11", "ex1", "d1", "m1"), sub("d12", "ex2", "d1", "m1")])
+             side("d11", "ex1", "m1"), side("d12", "ex2", "m1")])
 
     def test_grouped_by_the_owners_task_not_by_status(self):
         text = main.digest(self.chain(), NOW)
@@ -100,7 +111,7 @@ class Digest(unittest.TestCase):
     def test_a_sub_task_without_a_gist_is_named_by_its_stage(self):
         st = world([session("dev", "idle"), session("ex", recap={"text": "Adds the option to the bot and checks delivery"},
                                                     delegation="d11")],
-                   [task("d1", "dev", "Notify me", title="Notify me"), sub("d11", "ex", "d1", "m1")])
+                   [task("d1", "dev", "Notify me", title="Notify me"), side("d11", "ex", "m1")])
         self.assertEqual(rows(main.digest(st, NOW)), ["- 🔄 **Adds the option** to the bot and checks delivery"])
 
     def test_a_task_without_sub_tasks_is_one_row(self):
@@ -145,7 +156,7 @@ class Digest(unittest.TestCase):
     def test_chains_with_a_blocker_come_first(self):
         st = world([session("a"), session("ex", "idle", pending=[{"id": "q"}], gist={"text": "Emoji: pick"})],
                    [task("d1", "a", "Going", title="Going"), task("d2", "a", "Has a waiting sub-task",
-                    title="Has a waiting sub-task"), sub("d21", "ex", "d2", "m2")])
+                    title="Has a waiting sub-task"), side("d21", "ex", "m2")])
         st["sessions"]["a"]["delegation"] = "d1"
         text = main.digest(st, NOW)
         self.assertEqual(text.splitlines()[2:6], ["**Has a waiting sub-task**", "- ⏭ **Emoji**: pick → waiting for your word", "", "- 🔄 **Going**: in progress"])
@@ -153,8 +164,8 @@ class Digest(unittest.TestCase):
     def test_only_open_work_is_shown(self):
         st = world([session("dev"), session("ex1"), session("ex2"), session("ex3"), session("ex4")], [
             task("d1", "dev", "Open task"),
-            sub("d11", "ex1", "d1", "m1", state="replied"), sub("d12", "ex2", "d1", "m1", state="done"),
-            sub("d13", "ex3", "d1", "m1", state="stopped"), sub("d14", "ex4", "d1", "m1"),
+            side("d11", "ex1", "m1", state="replied"), side("d12", "ex2", "m1", state="done"),
+            side("d13", "ex3", "m1", state="stopped"), side("d14", "ex4", "m1"),
             task("d2", "dev", "Replied task", state="replied"), task("d3", "dev", "Closed", state="done"),
             task("d4", "dev", "Stopped", state="stopped")])
         text = main.digest(st, NOW)
@@ -176,15 +187,17 @@ class Digest(unittest.TestCase):
 
     def test_a_sub_task_below_a_sub_task_is_listed_under_the_task(self):
         st = world([session("dev", "idle"), session("ex1", delegation="d11", gist={"text": "Middle: one"}),
-                    session("ex2", delegation="d12", gist={"text": "Deep: two"})], [
-            task("d1", "dev", "Top task"), sub("d11", "ex1", "d1", "m1"), sub("d12", "ex2", "d11", "m1")])
+                    session("ex2", delegation="d12", gist={"text": "Deep: two"}),
+                    session("ex3", delegation="d13", gist={"text": "Executor: three"})], [
+            task("d1", "dev", "Top task"), side("d11", "ex1", "m1"), side("d12", "ex2", "m1", parent="d11"),
+            sub("d13", "ex3", "d12", "m1")])
         self.assertEqual(len(rows(main.digest(st, NOW))), 2)
+        self.assertNotIn("Executor", main.digest(st, NOW))
 
     def test_the_head_without_its_own_words_takes_the_owners_message(self):
         st = world([session("dev"), session("ex", gist={"text": "Covers: downloading"}, delegation="d5")], [
-            sub("d5", "ex", None, "m7")], messages={"m7": {"id": "m7", "from_owner": True, "state": "done",
+            side("d5", "ex", "m7", words=None)], messages={"m7": {"id": "m7", "from_owner": True, "state": "done",
                                                             "text": "[Image #1] 🎤 голос: animated covers are still missing"}})
-        st["delegations"]["d5"].pop("parent")
         self.assertEqual(rows(main.digest(st, NOW)), ["- 🔄 **Animated covers are still** missing: Covers: downloading"])
         self.assertNotIn("Image", main.digest(st, NOW))
         self.assertNotIn("🎤", main.digest(st, NOW))
@@ -192,7 +205,7 @@ class Digest(unittest.TestCase):
     def test_four_sub_tasks_then_and_n_more(self):
         sessions = [session("dev", "idle")] + [session(f"ex{i}", delegation=f"d1{i}", gist={"text": f"Part {i}: do"})
                                                 for i in range(1, 8)]
-        tasks = [task("d1", "dev", "Big task")] + [sub(f"d1{i}", f"ex{i}", "d1", "m1", created=NOW - 100 + i)
+        tasks = [task("d1", "dev", "Big task")] + [side(f"d1{i}", f"ex{i}", "m1", created=NOW - 100 + i)
                                                     for i in range(1, 8)]
         text = main.digest(world(sessions, tasks), NOW)
         self.assertEqual(len(rows(text)), 5)
@@ -214,7 +227,7 @@ class Digest(unittest.TestCase):
         long = "word " * 40
         st = world([session("dev", "idle"), session("ex", delegation="d11", gist={"text": "Name: " + long},
                                                     recap={"text": long})], [
-            task("d1", "dev", "Head: " + long), sub("d11", "ex", "d1", "m1"),
+            task("d1", "dev", "Head: " + long), side("d11", "ex", "m1"),
             task("d2", "dev", "Alone: " + long)])
         text = main.digest(st, NOW)
         self.assertGreaterEqual(len(rows(text)), 2)
@@ -226,9 +239,9 @@ class Digest(unittest.TestCase):
     def test_no_session_names_ids_paths_or_code(self):
         st = world([session("secret-session", "idle"), session("secret-exec", gist=None, recap=None, delegation="d11")],
                    [task("d1", "secret-session", "Fix the bot [hub:m42] see d12345 and **more**"),
-                    sub("d11", "secret-exec", "d1", "m1")])
+                    side("d11", "secret-exec", "m1", words=None, context="Brief with `code` and /some/path/file.py")])
         text = main.digest(st, NOW)
-        self.assertIn("**Sub-task**", text)       # no gist and no words: a plain label, not the brief
+        self.assertIn("**Sub-task**", text)       # at work, no gist and no words: a plain label, not the brief
         for bad in ("secret-session", "secret-exec", "d12345", "m42", "hub:", "**more", "/some/path", "`", "file.py", "d11"):
             self.assertNotIn(bad, text)
 
@@ -239,12 +252,116 @@ class Digest(unittest.TestCase):
         self.assertEqual(main.digest(world([session("dev")], [task("d1", "dev", "x", state="done")]), NOW), "")
 
 
+class Noise(unittest.TestCase):
+    """What a session raised on its own is its work, not the owner's: no "Sub-task: no result yet" rows in his digest."""
+
+    def setUp(self):
+        patch = say("en")
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_an_executor_under_an_open_task_is_not_a_row(self):
+        st = world([session("dev", "idle"), session("ex", delegation="d11", gist={"text": "Grouping: tests first"})],
+                   [task("d1", "dev", "Digest by tasks"), sub("d11", "ex", "d1", "m1")])
+        self.assertEqual(rows(main.digest(st, NOW)), ["- 🔄 **Digest by tasks**: sub-tasks in progress"])
+
+    def test_executors_alone_do_not_keep_a_closed_task(self):
+        st = world([session("dev", "idle"), session("ex", "idle"), session("busy-one", delegation="d99")], [
+            task("d1", "dev", "Resume the comments", state="done"), sub("d11", "ex", "d1", "m1"),
+            sub("d12", "busy-one", "d1", "m1", via_schedule=True)])
+        self.assertEqual(main.digest(st, NOW), "")
+
+    def test_an_executor_waiting_for_the_owner_keeps_the_task_and_is_a_row(self):
+        st = world([session("dev", "idle"), session("ex", "idle", pending=[{"id": "q"}], gist={"text": "Emoji: pick"})],
+                   [task("d1", "dev", "Digest by tasks", state="done"), sub("d11", "ex", "d1", "m1")])
+        self.assertEqual(rows(main.digest(st, NOW)), ["- ⏭ **Emoji**: pick → waiting for your word"])
+        st["delegations"]["d1"]["state"] = "working"
+        self.assertEqual(main.digest(st, NOW).splitlines()[2:], ["**Digest by tasks**", "- ⏭ **Emoji**: pick → waiting for your word"])
+
+    def test_a_sub_task_with_no_name_and_a_service_status_is_never_a_row(self):
+        for name, extra in (("idle", {}), ("busy", {"delegation": "d99"})):
+            with self.subTest(name):
+                st = world([session("dev", "idle"), session("ex", "idle" if name == "idle" else "busy", **extra)],
+                           [task("d1", "dev", "Head task", state="done"), side("d11", "ex", "m1", words=None)])
+                st["delegations"]["d99"] = task("d99", "ex", "", **{"for": None, "for_session": "x"})
+                self.assertEqual(main.digest(st, NOW), "")
+                st["delegations"]["d1"]["state"] = "working"   # the task itself is open: one row with its own status
+                self.assertEqual(rows(main.digest(st, NOW)), ["- 🔄 **Head task**: sub-tasks in progress"])
+                for bad in ("Sub-task", "no result yet", "busy"):
+                    self.assertNotIn(bad, main.digest(st, NOW))
+
+
+class Replay(unittest.TestCase):
+    """The owner's Telegram on 14.11: "Open tasks / Resume the auto-comments / Sub-task: no result yet" (then "busy with
+    another task"). The hub gave his message to a direction; the direction raised a comment-batch executor on its own,
+    the hub raised it out of the queue with his word (hub task go <executor> --for mN). The executor's task inherits his
+    message as its chain root, yet it is the direction's work. The events go through the core's own reducer."""
+
+    def setUp(self):
+        patch = say("en")
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.st, self.seq = reducer.empty(), 0
+        cli = {"channel": "cli", "owner": True}
+        self.ev("session.requested", "hub-core", cwd="/h", session_id="s-hub", kind="hub", **cli)
+        self.ev("session.started", "hub-core")
+        self.ev("session.requested", "smm-platform", cwd="/smm", session_id="s-smm", role="agent", about="smm", **cli)
+        self.ev("session.started", "smm-platform")
+        self.m = f"m{self.ev('message.received', src='telegram', text='Resume the auto-comments in Matchbox', channel='telegram', owner=True)}"
+        self.ev("turn.started", "hub-core", src="hook", marker=self.m, prompt_head="x")
+        self.d = f"d{self.ev('delegation.created', session='smm-platform', context='Resume them if paused', **{'for': self.m}, for_session=None, **by('hub-core'))}"
+        self.ev("turn.result", "hub-core", src="hook", text="passed")
+
+    def ev(self, type, entity=None, src=None, **data):
+        self.seq += 1
+        e = {"seq": self.seq, "ts": NOW + self.seq, "type": type, "entity": entity, "data": data,
+             **({"src": src} if src else {})}
+        self.st, _, why = reducer.reduce(self.st, e)
+        self.assertIsNone(why, (type, data))
+        return self.seq
+
+    def raise_executor(self, name):
+        """The direction asks for an executor in its turn on his task, the queue holds it, the hub raises it with his word."""
+        self.ev("task.run_requested", name, task="Comment batch to the writer", **by("smm-platform"))
+        self.ev("task.run_held", name, module="lean", reason="memory is tight", channel="core", owner=False)
+        self.ev("task.run_go", name, **{"for": self.m}, **by("hub-core"))
+        run = self.st["runs"][name]
+        for type, entity, data in executors.events_for(self.st, name, run, cwd=f"/smm/.claude/worktrees/{name}",
+                                                       worktree=None):
+            self.ev(type, entity, **data)
+        self.ev("session.started", name)
+        mine = [d for d in self.st["delegations"].values() if d["session"] == name]
+        self.assertEqual([d["root"] for d in mine], [self.m])   # the chain does grow from his message
+        return mine[0]
+
+    def test_an_executor_the_hub_raised_with_his_word_is_not_his_task(self):
+        self.ev("turn.started", "smm-platform", src="hook", marker=f"m{self.d[1:]}", prompt_head="x")
+        ex = self.raise_executor("cmt-batch-802")
+        self.ev("turn.result", "smm-platform", src="hook", text="They were on already.")
+        self.ev("delegation.done", self.d, **by("hub-core"))
+        self.assertIn(ex["state"], main.OPEN)
+        self.assertEqual(main.digest(self.st, NOW), "")                          # "Sub-task: no result yet"
+        self.st["sessions"]["cmt-batch-802"].update(state="busy", delegation="d999")   # busy with another task
+        self.st["delegations"]["d999"] = task("d999", "cmt-batch-802", "", **{"for": None, "for_session": "x"})
+        self.assertEqual(main.digest(self.st, NOW), "")                          # "Sub-task: busy with another task"
+
+    def test_the_owners_task_the_hub_gave_a_direction_stays(self):
+        self.assertEqual(rows(main.digest(self.st, NOW)), ["- ⏸ **Resume the auto-comments** in Matchbox: no result yet"])
+        self.ev("turn.started", "smm-platform", src="hook", marker=f"m{self.d[1:]}", prompt_head="x")
+        self.raise_executor("cmt-batch-803")
+        text = main.digest(self.st, NOW)
+        self.assertEqual(text.splitlines()[0], "**📋 Open tasks · 1**")
+        self.assertIn("Resume the auto-comments", text)
+        self.assertEqual(len(rows(text)), 1)                                    # the executor is not a row of its own
+        self.assertNotIn("Sub-task", text)
+
+
 class Language(unittest.TestCase):
     """Texts go to Telegram in the hub language: English by default, Russian when the hub speaks Russian."""
 
     def st(self):
         return world([session("dev", "idle"), session("ex", "idle", pending=[{"id": "q"}], gist={"text": "Emoji: pick"})],
-                     [task("d1", "dev", "Fix the bot", title="Fix the bot"), sub("d11", "ex", "d1", "m1")])
+                     [task("d1", "dev", "Fix the bot", title="Fix the bot"), side("d11", "ex", "m1")])
 
     def test_english_is_the_default(self):
         with mock.patch("core.i18n.current", side_effect=RuntimeError("no hub language")):

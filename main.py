@@ -4,7 +4,9 @@ open - the previous digest is erased and no new one is sent. The digest covers t
 machine are not visible here. It does not touch the core: it reads the journal.
 
 The digest is grouped by the owner's tasks, not by statuses: a task is the chain of work that grew from one message
-of the owner (the delegations with the same root). The task is a bold heading, under it its sub-tasks, one row each:
+of the owner (the delegations with the same root). Only what the owner set himself or the hub set on his word counts:
+an executor or a task a session raised on its own is its work, not his, even when it grew from his message. The task is a
+bold heading, under it its sub-tasks (what else the hub handed on his word), one row each:
 "- <status emoji> **Name**: gist -> stage", up to ~70 characters, no session names, ids and paths, at most four
 sub-tasks under a task. A task without sub-tasks is one row. The status and the blocker come from the core state only
 (the same emoji as the core's own day digest); what the core does not know is not written.
@@ -192,18 +194,36 @@ def need(reply):
     return clean(got[1]).rstrip(" .") if got else ""
 
 
+def owned(d):
+    """Is the delegation the owner's task: it carries his message (for) and is set for no session (hub task new
+    <session> --for mN). An executor (hub task run / hub task go) is created by the core for the session that raised it
+    (for_session, no for): --for there only carries his word for the core's checks and the chain root it inherits from
+    his message does not make it his - it is that session's work."""
+    return bool(d.get("for")) and not d.get("for_session")
+
+
+def asks(st, d):
+    """Does an open delegation wait for the owner's answer (the "waits for your word" status): such a row is his
+    business whoever set the delegation."""
+    return d.get("state") in OPEN and status(st, d, (), "en")[0] == "owner"
+
+
+def counts(st, d):
+    """An open delegation the owner's digest shows: his own task or one that waits for him."""
+    return d.get("state") in OPEN and (owned(d) or asks(st, d))
+
+
 def chains(st):
     """{root: [delegations, oldest first]} of the owner's tasks with open work: a task is the chain that grew from one
     message of the owner (its delegations carry the message id as root; before that field - the head's own "for").
-    Whatever a session started on its own is not the owner's task."""
+    The task is in the digest while a delegation of his own (owned) is open or any delegation of the chain waits for
+    his answer: executors still at work under a closed task do not keep it there."""
     out = {}
     for d in sorted(st.get("delegations", {}).values(), key=lambda d: d.get("created") or d.get("since") or 0):
         root = d.get("root") or (d.get("for") if not d.get("for_session") else None)
         if root:
             out.setdefault(root, []).append(d)
-    return {root: ds for root, ds in out.items() if any(d.get("state") in OPEN for d in ds) and (
-        (st["messages"].get(root) or {}).get("from_owner")
-        or any(d.get("for") == root and not d.get("for_session") for d in ds))}
+    return {root: ds for root, ds in out.items() if any(counts(st, d) for d in ds)}
 
 
 def heading(st, d, root, head):
@@ -257,9 +277,13 @@ def line(kind, text, stage):
 
 def group(st, root, ds, lang):
     """One task: (rank, ("lone", row)) for a task without open sub-tasks or (rank, ("chain", lines)); the rank is the
-    worst status inside (blockers first), then the age."""
+    worst status inside (blockers first), then the age. Rows are only the owner's own delegations and those waiting for
+    his answer (counts): another executor is not listed, it only makes its task's status "sub-tasks in progress". A
+    sub-task with no name of its own and a service status (busy, no result yet) says nothing to the owner and is not
+    listed either. None - nothing to show."""
     ids = {d["id"] for d in ds}
-    head = next((d for d in ds if d.get("for") == root and not d.get("for_session")), ds[0])
+    mine = [d for d in ds if owned(d)] or [d for d in ds if counts(st, d)]
+    head = next((d for d in mine if d.get("for") == root), mine[0])
     under = {}
     for d in ds:
         if d is not head:
@@ -274,8 +298,12 @@ def group(st, root, ds, lang):
 
     subs = []
     for k in below(head):
+        if not counts(st, k):
+            continue
         kind, stage = status(st, k, kids(k), lang)
         text, own = heading(st, k, root, False)
+        if not text and kind in ("busy", "idle"):   # "Sub-task: no result yet" - noise, never a row
+            continue
         if kind == "working" and own:    # the name already says what the session does: no second phrase after it
             stage = ""
         subs.append((ORDER.index(kind), k.get("since") or 0, line(kind, text or tr(lang, "subtask"), stage)))
@@ -285,7 +313,7 @@ def group(st, root, ds, lang):
     ranks = ([ORDER.index(own[0])] if own else []) + [s[0] for s in subs]
     rank = (min(ranks) if ranks else len(ORDER), head.get("created") or 0)
     if not subs:
-        return rank, ("lone", line(own[0], title, own[1]) if own else f"- **{split_name(title)[0]}**")
+        return (rank, ("lone", line(own[0], title, own[1]))) if own else None
     lines = [f"**{cut(title, ROW)}**"]
     if own and own[0] in ("owner", "stopped"):   # the head's own blocker must not drown under its sub-tasks
         lines.append(f"- {ICON[own[0]]} {cut(own[1], ROW - 2)}")
@@ -300,7 +328,7 @@ def digest(st, now, lang=None):
     sub-tasks under it, a task without sub-tasks is one row. No session names, ids and paths. lang - hub language by
     default, resolved now."""
     lang = lang or _lang()
-    found = sorted((group(st, root, ds, lang) for root, ds in chains(st).items()), key=lambda g: g[0])
+    found = sorted(filter(None, (group(st, root, ds, lang) for root, ds in chains(st).items())), key=lambda g: g[0])
     if not found:
         return ""
     shown = found[:TASKS]
